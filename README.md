@@ -2,7 +2,7 @@
 
 https://github.com/apache/kafka
 
-kafka源码翻译，问题整理，简单代码描述等 
+kafka源码解析 
 
 # Dev
 
