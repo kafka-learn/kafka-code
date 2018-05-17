@@ -23,3 +23,7 @@ https://github.com/kafka-learn/kafka-code/wiki
 # Todo
 
 https://github.com/kafka-learn/kafka-code/projects
+
+# 交流
+
+QQ群：698794283
