@@ -93,6 +93,19 @@ Note: You can change the ```ip```, ```replication-factor```, ```partitions``` an
 
 ![](imgs/consumer.png)
 
+# How to build simiki environment
+
+* [Simiki Introduce](https://kafka-learn.github.io/kafka-code/intro/gettingstarted.html)
+
+* Deployment Wiki: 
+
+```cmd
+pip install ghp-import
+
+ghp-import -p -m "Update output documentation" -r origin -b gh-pages output
+```
+
+
 # Wiki
 
 https://github.com/kafka-learn/kafka-code/wiki
