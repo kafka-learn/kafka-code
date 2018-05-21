@@ -63,17 +63,21 @@ testCompile group: 'org.slf4j', name: 'slf4j-simple', version: '1.7.21'
 
 11. Set Kafka startup parameters: IDEA -> Edit Configurations -> add Applications as follows:
 
-* **Kafka startup class**
+* **Kafka startup class**  
+
 ![](imgs/kafka_server_startup_configurations.png)
 
-* **Kafka producer startup class**
-![](imgs\kafka_producer_configurations.png)
+* **Kafka producer startup class**  
 
-* **Kafka comsumer startup class**
-![](imgs\kafka_consumer_configurations.png)
+![](imgs/kafka_producer_configurations.png)
 
-* **Kafka create topic class**
-![](imgs\kafka_create_topic_configurations.png)
+* **Kafka comsumer startup class**  
+
+![](imgs/kafka_consumer_configurations.png)
+
+* **Kafka create topic class**  
+
+![](imgs/kafka_create_topic_configurations.png)
 
 Note: You can change the ```ip```, ```replication-factor```, ```partitions``` and ```topic``` as you like.
 
@@ -81,10 +85,12 @@ Note: You can change the ```ip```, ```replication-factor```, ```partitions``` an
 
 13. You can write something in your *Producer Console* and you will see it appear in the *Consumer Console*. 
 
-* **Producer**
+* **Producer**  
+
 ![](imgs/producer.png) 
 
-* **Consumer**
+* **Consumer**  
+
 ![](imgs/consumer.png)
 
 # Wiki
