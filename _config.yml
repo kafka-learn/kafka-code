@@ -2,9 +2,9 @@
 # http://simiki.org/docs/configuration.html
 
 url: https://kafka-learn.github.io/kafka-code/
-title: Kafka Wiki 
-keywords: Kafka Wiki 
-description: Kafka Wiki 
+title: Kafka源码解析 Wiki 
+keywords: Kafka源码解析 Wiki 
+description: Kafka源码解析 Wiki 
 author: 余昕宇
 
 root: /kafka-code/
