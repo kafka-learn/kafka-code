@@ -1,0 +1,203 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/tango.css">
+    <link rel="shortcut icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>Kafka源码结构 - Kafka源码解析</title>
+    <meta name="keywords" content="Kafka源码解析"/>
+    <meta name="description" content="Kafka源码解析"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/kafka-code/">Home</a>&nbsp;&#187;&nbsp;<a href="/kafka-code/#Intro">Intro</a>&nbsp;&#187;&nbsp;Kafka源码结构
+    <span class="updated">Page Updated&nbsp;
+      2018-5-21 14:18
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">Kafka源码结构</div>
+
+  <div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#_1">目录结构</a><ul>
+<li><a href="#_2">源码文件结构</a></li>
+<li><a href="#_3">核心模块结构</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<h1 id="_1">目录结构</h1>
+<h2 id="_2">源码文件结构</h2>
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bin</td>
+<td>存放可直接在Linux或Windows上运行的.sh文件和.bat文件，包含Kafka常用操作以及ZooKeeper便捷脚本</td>
+</tr>
+<tr>
+<td>checkstyle</td>
+<td>存放代码规范检查文档</td>
+</tr>
+<tr>
+<td>clients</td>
+<td>客户端的实现</td>
+</tr>
+<tr>
+<td>config</td>
+<td>存放配置文件</td>
+</tr>
+<tr>
+<td>connetct</td>
+<td>Kafka Connect工具的实现</td>
+</tr>
+<tr>
+<td>core</td>
+<td>核心模块</td>
+</tr>
+<tr>
+<td>docs</td>
+<td>官方文档</td>
+</tr>
+<tr>
+<td>examples</td>
+<td>Kafka生产者消费者简单Demo</td>
+</tr>
+<tr>
+<td>jmh-benchmarks</td>
+<td>基准测试模块</td>
+</tr>
+<tr>
+<td>log4j-appender</td>
+<td>日志模块</td>
+</tr>
+<tr>
+<td>streams</td>
+<td>Kafka Streams客户端库</td>
+</tr>
+<tr>
+<td>tools</td>
+<td>工具类</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3">核心模块结构</h2>
+<table>
+<thead>
+<tr>
+<th>目录</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>admin</td>
+<td>管理模块，操作和管理topic， broker, consumer group， records等</td>
+</tr>
+<tr>
+<td>api</td>
+<td>封装调用</td>
+</tr>
+<tr>
+<td>client</td>
+<td>Producer生产的元数据信息的传递</td>
+</tr>
+<tr>
+<td>cluster</td>
+<td>存活的Broker集群、分区、副本以及他们的底层属性和相互关系</td>
+</tr>
+<tr>
+<td>common</td>
+<td>异常类、枚举类、格式化类、配置类等</td>
+</tr>
+<tr>
+<td>consumer</td>
+<td>旧版本的废弃消费者类</td>
+</tr>
+<tr>
+<td>controller</td>
+<td>Kafka集群控制中心的选举，分区状态管理，分区副本状态管理，监听ZooKeeper数据变化等</td>
+</tr>
+<tr>
+<td>coordinator</td>
+<td>GroupCoordinator处理一般组成员资格和偏移量。transaction管理事务</td>
+</tr>
+<tr>
+<td>javaapi</td>
+<td>给java调用的生产者、消费者、消息集api</td>
+</tr>
+<tr>
+<td>log</td>
+<td>管理log，它是消息存储的形式，可对应到磁盘上的一个文件夹</td>
+</tr>
+<tr>
+<td>message</td>
+<td>由消息封装而成的一个压缩消息集</td>
+</tr>
+<tr>
+<td>metrics</td>
+<td>Kafka监控模块</td>
+</tr>
+<tr>
+<td>network</td>
+<td>网络管理模块，对客户端连接的处理</td>
+</tr>
+<tr>
+<td>producer</td>
+<td>旧版本的废弃生产者类</td>
+</tr>
+<tr>
+<td>security</td>
+<td>权限管理</td>
+</tr>
+<tr>
+<td>serializer</td>
+<td>消息序列化与反序列化处理</td>
+</tr>
+<tr>
+<td>server</td>
+<td>服务器端的实现</td>
+</tr>
+<tr>
+<td>tools</td>
+<td>各种控制台工具的实现</td>
+</tr>
+<tr>
+<td>utils</td>
+<td>工具类</td>
+</tr>
+<tr>
+<td>zk</td>
+<td>提供与ZooKeeper交互的管理方法和在管道之上的更高级别的Kafka特定操作</td>
+</tr>
+<tr>
+<td>zookeeper</td>
+<td>一个促进管道传输请求的ZooKeeper客户端</td>
+</tr>
+</tbody>
+</table>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 余昕宇.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-05-22 10:45:39</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
