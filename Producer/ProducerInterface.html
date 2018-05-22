@@ -1,0 +1,169 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/tango.css">
+    <link rel="shortcut icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>Producer接口 - Kafka源码解析</title>
+    <meta name="keywords" content="Kafka源码解析"/>
+    <meta name="description" content="Kafka源码解析"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/kafka-code/">Home</a>&nbsp;&#187;&nbsp;<a href="/kafka-code/#Producer">Producer</a>&nbsp;&#187;&nbsp;Producer接口
+    <span class="updated">Page Updated&nbsp;
+      2018-5-22 11:48
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">Producer接口</div>
+
+  <div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#producer">Producer接口的实现</a></li>
+</ul>
+</div>
+<h1 id="producer">Producer接口的实现</h1>
+<div class="hlcode"><pre><span class="cm">/*</span>
+<span class="cm"> * Licensed to the Apache Software Foundation (ASF) under one or more</span>
+<span class="cm"> * contributor license agreements. See the NOTICE file distributed with</span>
+<span class="cm"> * this work for additional information regarding copyright ownership.</span>
+<span class="cm"> * The ASF licenses this file to You under the Apache License, Version 2.0</span>
+<span class="cm"> * (the &quot;License&quot;); you may not use this file except in compliance with</span>
+<span class="cm"> * the License. You may obtain a copy of the License at</span>
+<span class="cm"> *</span>
+<span class="cm"> *    http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="cm"> *</span>
+<span class="cm"> * Unless required by applicable law or agreed to in writing, software</span>
+<span class="cm"> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="cm"> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="cm"> * See the License for the specific language governing permissions and</span>
+<span class="cm"> * limitations under the License.</span>
+<span class="cm"> */</span>
+<span class="kn">package</span> <span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">kafka</span><span class="o">.</span><span class="na">clients</span><span class="o">.</span><span class="na">producer</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.Metric</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.MetricName</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.PartitionInfo</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.consumer.OffsetAndMetadata</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.TopicPartition</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.ProducerFencedException</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">java.io.Closeable</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.List</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.Map</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.Future</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.TimeUnit</span><span class="o">;</span>
+
+<span class="cm">/**</span>
+<span class="cm"> * The interface for the {@link KafkaProducer}</span>
+<span class="cm"> * @see KafkaProducer</span>
+<span class="cm"> * @see MockProducer</span>
+<span class="cm"> */</span>
+<span class="kd">public</span> <span class="kd">interface</span> <span class="nc">Producer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="kd">extends</span> <span class="n">Closeable</span> <span class="o">{</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#initTransactions()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">initTransactions</span><span class="o">();</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#beginTransaction()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">beginTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span><span class="o">;</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#sendOffsetsToTransaction(Map, String)}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">sendOffsetsToTransaction</span><span class="o">(</span><span class="n">Map</span><span class="o">&lt;</span><span class="n">TopicPartition</span><span class="o">,</span> <span class="n">OffsetAndMetadata</span><span class="o">&gt;</span> <span class="n">offsets</span><span class="o">,</span>
+                                  <span class="n">String</span> <span class="n">consumerGroupId</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span><span class="o">;</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#commitTransaction()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">commitTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span><span class="o">;</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#abortTransaction()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">abortTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span><span class="o">;</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#send(ProducerRecord)}</span>
+<span class="cm">     */</span>
+    <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="nf">send</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">);</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#send(ProducerRecord, Callback)}</span>
+<span class="cm">     */</span>
+    <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="nf">send</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">,</span> <span class="n">Callback</span> <span class="n">callback</span><span class="o">);</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#flush()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">flush</span><span class="o">();</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#partitionsFor(String)}</span>
+<span class="cm">     */</span>
+    <span class="n">List</span><span class="o">&lt;</span><span class="n">PartitionInfo</span><span class="o">&gt;</span> <span class="nf">partitionsFor</span><span class="o">(</span><span class="n">String</span> <span class="n">topic</span><span class="o">);</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#metrics()}</span>
+<span class="cm">     */</span>
+    <span class="n">Map</span><span class="o">&lt;</span><span class="n">MetricName</span><span class="o">,</span> <span class="o">?</span> <span class="kd">extends</span> <span class="n">Metric</span><span class="o">&gt;</span> <span class="n">metrics</span><span class="o">();</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#close()}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">close</span><span class="o">();</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * See {@link KafkaProducer#close(long, TimeUnit)}</span>
+<span class="cm">     */</span>
+    <span class="kt">void</span> <span class="nf">close</span><span class="o">(</span><span class="kt">long</span> <span class="n">timeout</span><span class="o">,</span> <span class="n">TimeUnit</span> <span class="n">unit</span><span class="o">);</span>
+
+<span class="o">}</span>
+</pre></div>
+
+
+<p>Producer接口中主要定义了为KafkaProducer使用的API，分为以下几类方法（为描述方便，暂时省略以下方法的参数）：</p>
+<ol>
+<li>
+<p><code>transaction</code>方法，具体分为<code>initTransactions()</code>, <code>beginTransaction()</code>, <code>sendOffsetsToTransaction()</code>, <code>commitTransaction()</code>和<code>abortTransaction()</code>。主要作用是对Producer进行事务管理。</p>
+</li>
+<li>
+<p><code>send()</code>方法，发送消息到RecordAccumulator中暂存，提供了同步和异步两套方案。</p>
+</li>
+<li>
+<p><code>flush()</code>方法，调用该方法将立即发送所有缓冲的消息，并将阻塞其他与这些消息相关的请求。</p>
+</li>
+<li>
+<p><code>partitionsFor()</code>方法，</p>
+</li>
+<li>
+<p><code>metrics()</code>方法，</p>
+</li>
+<li>
+<p><code>close()</code>方法，关闭这个生产者。在所有发送的请求完成之前，该方法会阻塞。</p>
+</li>
+</ol>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 余昕宇.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-05-22 12:45:13</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
