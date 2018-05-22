@@ -2,9 +2,9 @@
 # http://simiki.org/docs/configuration.html
 
 url: https://kafka-learn.github.io/kafka-code/
-title: Kafka源码解析 Wiki 
-keywords: Kafka源码解析 Wiki 
-description: Kafka源码解析 Wiki 
+title: Kafka源码解析
+keywords: Kafka源码解析 
+description: Kafka源码解析
 author: 余昕宇
 
 root: /kafka-code/
@@ -13,11 +13,11 @@ destination: output
 themes_dir: themes
 theme: simple2
 
-category:
-  - name: linux  # the category directory name
-    label: Linux/运维  # alias name of category, used in index page
-  - name: database
-    label: 数据库
+# category:
+#   - name: linux  # the category directory name
+#     label: Linux/运维  # alias name of category, used in index page
+#   - name: database
+#     label: 数据库
 
 deploy:
   - type: git
