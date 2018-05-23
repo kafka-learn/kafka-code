@@ -1,0 +1,855 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/style.css">
+    <link rel="Stylesheet" type="text/css" href="/kafka-code/static/css/tango.css">
+    <link rel="shortcut icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/kafka-code/favicon.ico" type="image/x-icon">
+    <link rel="alternate" type="application/atom+xml" href="atom.xml" title="Atom feed">
+    <title>KafkaProducer - Kafka源码解析</title>
+    <meta name="keywords" content="Kafka源码解析"/>
+    <meta name="description" content="Kafka源码解析"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+
+  <body>
+    <div id="container">
+      
+<div id="header">
+  <div class="post-nav"><a href="/kafka-code/">Home</a>&nbsp;&#187;&nbsp;<a href="/kafka-code/#Producer">Producer</a>&nbsp;&#187;&nbsp;KafkaProducer
+    <span class="updated">Page Updated&nbsp;
+      2018-5-22 19:06
+    </span></div>
+</div>
+<div class="clearfix"></div>
+
+<div class="page_title">KafkaProducer</div>
+
+  <div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#kafkaproducer">KafkaProducer类的实现</a></li>
+</ul>
+</div>
+<h1 id="kafkaproducer">KafkaProducer类的实现</h1>
+<div class="hlcode"><pre><span class="kn">package</span> <span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">kafka</span><span class="o">.</span><span class="na">clients</span><span class="o">.</span><span class="na">producer</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.ApiVersions</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.ClientUtils</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.KafkaClient</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.Metadata</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.NetworkClient</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.consumer.KafkaConsumer</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.consumer.OffsetAndMetadata</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.consumer.OffsetCommitCallback</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.ProducerInterceptors</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.ProducerMetrics</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.RecordAccumulator</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.Sender</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.TransactionManager</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.clients.producer.internals.TransactionalRequestResult</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.Cluster</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.KafkaException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.Metric</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.MetricName</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.PartitionInfo</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.TopicPartition</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.config.ConfigException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.ApiException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.AuthenticationException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.AuthorizationException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.InterruptException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.ProducerFencedException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.RecordTooLargeException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.SerializationException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.TimeoutException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.errors.TopicAuthorizationException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.header.Header</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.header.Headers</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.header.internals.RecordHeaders</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.internals.ClusterResourceListeners</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.metrics.JmxReporter</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.metrics.MetricConfig</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.metrics.Metrics</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.metrics.MetricsReporter</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.metrics.Sensor</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.network.ChannelBuilder</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.network.Selector</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.record.AbstractRecords</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.record.CompressionType</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.record.RecordBatch</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.serialization.ExtendedSerializer</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.serialization.Serializer</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.utils.AppInfoParser</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.utils.KafkaThread</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.utils.LogContext</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.kafka.common.utils.Time</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.slf4j.Logger</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">java.net.InetSocketAddress</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.Collections</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.List</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.Map</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.Objects</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.Properties</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.ExecutionException</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.Future</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.TimeUnit</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.atomic.AtomicInteger</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">java.util.concurrent.atomic.AtomicReference</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">static</span> <span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">kafka</span><span class="o">.</span><span class="na">common</span><span class="o">.</span><span class="na">serialization</span><span class="o">.</span><span class="na">ExtendedSerializer</span><span class="o">.</span><span class="na">Wrapper</span><span class="o">.</span><span class="na">ensureExtended</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">KafkaProducer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="kd">implements</span> <span class="n">Producer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="o">{</span>
+
+    <span class="c1">//调用Slf4j的接口API</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Logger</span> <span class="n">log</span><span class="o">;</span>
+
+    <span class="c1">//通过juc的Atomic类来保证生成唯一的客户端id</span>
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="n">AtomicInteger</span> <span class="n">PRODUCER_CLIENT_ID_SEQUENCE</span> <span class="o">=</span> <span class="k">new</span> <span class="n">AtomicInteger</span><span class="o">(</span><span class="mi">1</span><span class="o">);</span>
+
+    <span class="c1">//规定的JMX监控程序的前缀</span>
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="n">String</span> <span class="n">JMX_PREFIX</span> <span class="o">=</span> <span class="s">&quot;kafka.producer&quot;</span><span class="o">;</span>
+
+    <span class="c1">//规定的网络线程的前缀</span>
+    <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="n">String</span> <span class="n">NETWORK_THREAD_PREFIX</span> <span class="o">=</span> <span class="s">&quot;kafka-producer-network-thread&quot;</span><span class="o">;</span>
+
+    <span class="c1">//用户指定客户端id</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">String</span> <span class="n">clientId</span><span class="o">;</span>
+
+    <span class="c1">// Visible for testing</span>
+    <span class="c1">//生产者维护的完整的内部统计信息</span>
+    <span class="kd">final</span> <span class="n">Metrics</span> <span class="n">metrics</span><span class="o">;</span>
+
+    <span class="c1">//分区选择器，根据一定的策略将消息推送到选中的分区</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Partitioner</span> <span class="n">partitioner</span><span class="o">;</span>
+
+    <span class="c1">//消息的最大长度（消息头+key+value）</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="kt">int</span> <span class="n">maxRequestSize</span><span class="o">;</span>
+
+    <span class="c1">//一条待发送的消息可占据的缓冲区大小</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="kt">long</span> <span class="n">totalMemorySize</span><span class="o">;</span>
+
+    <span class="c1">//kafka集群的元数据信息</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Metadata</span> <span class="n">metadata</span><span class="o">;</span>
+
+    <span class="c1">//消息暂存器</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">RecordAccumulator</span> <span class="n">accumulator</span><span class="o">;</span>
+
+    <span class="c1">//负责发送向kafka集群发送生产出的消息的后台线程</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Sender</span> <span class="n">sender</span><span class="o">;</span>
+
+    <span class="c1">//执行sender线程发送任务的线程</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Thread</span> <span class="n">ioThread</span><span class="o">;</span>
+
+    <span class="c1">//消息压缩类型</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">CompressionType</span> <span class="n">compressionType</span><span class="o">;</span>
+
+    <span class="c1">//</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Sensor</span> <span class="n">errors</span><span class="o">;</span>
+
+    <span class="c1">//表示时间</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Time</span> <span class="n">time</span><span class="o">;</span>
+
+    <span class="c1">//key的序列化器</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">ExtendedSerializer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">&gt;</span> <span class="n">keySerializer</span><span class="o">;</span>
+
+    <span class="c1">//value的序列化器</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">ExtendedSerializer</span><span class="o">&lt;</span><span class="n">V</span><span class="o">&gt;</span> <span class="n">valueSerializer</span><span class="o">;</span>
+
+    <span class="c1">//存储生产者配置的对象</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">ProducerConfig</span> <span class="n">producerConfig</span><span class="o">;</span>
+
+    <span class="c1">//等待更新kafka集群元数据信息的最大时长</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="kt">long</span> <span class="n">maxBlockTimeMs</span><span class="o">;</span>
+
+    <span class="c1">//发送请求等待ACK确认的最大时长</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="kt">int</span> <span class="n">requestTimeoutMs</span><span class="o">;</span>
+
+    <span class="c1">//生产者消息拦截器集合</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">ProducerInterceptors</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">interceptors</span><span class="o">;</span>
+
+    <span class="c1">//API版本</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">ApiVersions</span> <span class="n">apiVersions</span><span class="o">;</span>
+
+    <span class="c1">//事务管理</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="n">TransactionManager</span> <span class="n">transactionManager</span><span class="o">;</span>
+
+    <span class="c1">//Kafka生产者的五个构造函数，内部均调用第五个构造函数，没有的参数设置为null</span>
+
+    <span class="c1">//接受键值对形式的配置参数</span>
+    <span class="kd">public</span> <span class="nf">KafkaProducer</span><span class="o">(</span><span class="kd">final</span> <span class="n">Map</span><span class="o">&lt;</span><span class="n">String</span><span class="o">,</span> <span class="n">Object</span><span class="o">&gt;</span> <span class="n">configs</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">this</span><span class="o">(</span><span class="k">new</span> <span class="n">ProducerConfig</span><span class="o">(</span><span class="n">configs</span><span class="o">),</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="c1">//接受键值对形式的配置参数，接受key和value的序列化器</span>
+    <span class="kd">public</span> <span class="nf">KafkaProducer</span><span class="o">(</span><span class="n">Map</span><span class="o">&lt;</span><span class="n">String</span><span class="o">,</span> <span class="n">Object</span><span class="o">&gt;</span> <span class="n">configs</span><span class="o">,</span> <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">&gt;</span> <span class="n">keySerializer</span><span class="o">,</span> <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">V</span><span class="o">&gt;</span> <span class="n">valueSerializer</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">this</span><span class="o">(</span><span class="k">new</span> <span class="n">ProducerConfig</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">addSerializerToConfig</span><span class="o">(</span><span class="n">configs</span><span class="o">,</span> <span class="n">keySerializer</span><span class="o">,</span> <span class="n">valueSerializer</span><span class="o">)),</span>
+            <span class="n">keySerializer</span><span class="o">,</span>
+            <span class="n">valueSerializer</span><span class="o">,</span>
+            <span class="kc">null</span><span class="o">,</span>
+            <span class="kc">null</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="c1">//以Properties对象的形式传入配置参数</span>
+    <span class="kd">public</span> <span class="nf">KafkaProducer</span><span class="o">(</span><span class="n">Properties</span> <span class="n">properties</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">this</span><span class="o">(</span><span class="k">new</span> <span class="n">ProducerConfig</span><span class="o">(</span><span class="n">properties</span><span class="o">),</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="c1">//以Properties对象的形式传入配置参数，接受key和value的序列化器</span>
+    <span class="kd">public</span> <span class="nf">KafkaProducer</span><span class="o">(</span><span class="n">Properties</span> <span class="n">properties</span><span class="o">,</span> <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">&gt;</span> <span class="n">keySerializer</span><span class="o">,</span> <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">V</span><span class="o">&gt;</span> <span class="n">valueSerializer</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">this</span><span class="o">(</span><span class="k">new</span> <span class="n">ProducerConfig</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">addSerializerToConfig</span><span class="o">(</span><span class="n">properties</span><span class="o">,</span> <span class="n">keySerializer</span><span class="o">,</span> <span class="n">valueSerializer</span><span class="o">)),</span>
+                <span class="n">keySerializer</span><span class="o">,</span> <span class="n">valueSerializer</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="c1">//接受ProducerConfig类型的对象形式的参数，接受key和value的序列化器，接受元数据信息对象，接受Kafka客户端对象</span>
+    <span class="nd">@SuppressWarnings</span><span class="o">(</span><span class="s">&quot;unchecked&quot;</span><span class="o">)</span>
+    <span class="c1">// visible for testing</span>
+    <span class="n">KafkaProducer</span><span class="o">(</span><span class="n">ProducerConfig</span> <span class="n">config</span><span class="o">,</span>
+                  <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">&gt;</span> <span class="n">keySerializer</span><span class="o">,</span>
+                  <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">V</span><span class="o">&gt;</span> <span class="n">valueSerializer</span><span class="o">,</span>
+                  <span class="n">Metadata</span> <span class="n">metadata</span><span class="o">,</span>
+                  <span class="n">KafkaClient</span> <span class="n">kafkaClient</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="c1">//将用户传入的ProducerConfig类型的对象的数据以键值对的格式来存储</span>
+            <span class="n">Map</span><span class="o">&lt;</span><span class="n">String</span><span class="o">,</span> <span class="n">Object</span><span class="o">&gt;</span> <span class="n">userProvidedConfigs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">();</span>
+
+            <span class="c1">//存储ProducerConfig</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">producerConfig</span> <span class="o">=</span> <span class="n">config</span><span class="o">;</span>
+
+            <span class="c1">//存储当前时间</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">time</span> <span class="o">=</span> <span class="n">Time</span><span class="o">.</span><span class="na">SYSTEM</span><span class="o">;</span>
+
+            <span class="c1">//获取用户传入的客户端id</span>
+            <span class="n">String</span> <span class="n">clientId</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">CLIENT_ID_CONFIG</span><span class="o">);</span>
+
+            <span class="c1">//如果用户没有传入，则用juc的Atomic自增对象来生成，并与固定前缀相连，赋给对象属性</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">clientId</span><span class="o">.</span><span class="na">length</span><span class="o">()</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="o">)</span>
+                <span class="n">clientId</span> <span class="o">=</span> <span class="s">&quot;producer-&quot;</span> <span class="o">+</span> <span class="n">PRODUCER_CLIENT_ID_SEQUENCE</span><span class="o">.</span><span class="na">getAndIncrement</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">clientId</span> <span class="o">=</span> <span class="n">clientId</span><span class="o">;</span>
+
+            <span class="c1">//获取用户传入的事务id，如果用户没传，则为空值</span>
+            <span class="n">String</span> <span class="n">transactionalId</span> <span class="o">=</span> <span class="n">userProvidedConfigs</span><span class="o">.</span><span class="na">containsKey</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span><span class="o">)</span> <span class="o">?</span>
+                    <span class="o">(</span><span class="n">String</span><span class="o">)</span> <span class="n">userProvidedConfigs</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span><span class="o">)</span> <span class="o">:</span> <span class="kc">null</span><span class="o">;</span>
+
+            <span class="c1">//根据客户端id和事务id来生成相应的日志内容</span>
+            <span class="n">LogContext</span> <span class="n">logContext</span><span class="o">;</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">transactionalId</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span>
+                <span class="n">logContext</span> <span class="o">=</span> <span class="k">new</span> <span class="n">LogContext</span><span class="o">(</span><span class="n">String</span><span class="o">.</span><span class="na">format</span><span class="o">(</span><span class="s">&quot;[Producer clientId=%s] &quot;</span><span class="o">,</span> <span class="n">clientId</span><span class="o">));</span>
+            <span class="k">else</span>
+                <span class="n">logContext</span> <span class="o">=</span> <span class="k">new</span> <span class="n">LogContext</span><span class="o">(</span><span class="n">String</span><span class="o">.</span><span class="na">format</span><span class="o">(</span><span class="s">&quot;[Producer clientId=%s, transactionalId=%s] &quot;</span><span class="o">,</span> <span class="n">clientId</span><span class="o">,</span> <span class="n">transactionalId</span><span class="o">));</span>
+            <span class="c1">//为当前对象的log属性赋予上面生成的日志内容</span>
+            <span class="n">log</span> <span class="o">=</span> <span class="n">logContext</span><span class="o">.</span><span class="na">logger</span><span class="o">(</span><span class="n">KafkaProducer</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+
+            <span class="c1">//输出生产者开始工作的log信息</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">trace</span><span class="o">(</span><span class="s">&quot;Starting the Kafka producer&quot;</span><span class="o">);</span>
+
+            <span class="c1">//</span>
+            <span class="n">Map</span><span class="o">&lt;</span><span class="n">String</span><span class="o">,</span> <span class="n">String</span><span class="o">&gt;</span> <span class="n">metricTags</span> <span class="o">=</span> <span class="n">Collections</span><span class="o">.</span><span class="na">singletonMap</span><span class="o">(</span><span class="s">&quot;client-id&quot;</span><span class="o">,</span> <span class="n">clientId</span><span class="o">);</span>
+            <span class="n">MetricConfig</span> <span class="n">metricConfig</span> <span class="o">=</span> <span class="k">new</span> <span class="n">MetricConfig</span><span class="o">().</span><span class="na">samples</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">METRICS_NUM_SAMPLES_CONFIG</span><span class="o">))</span>
+                    <span class="o">.</span><span class="na">timeWindow</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">METRICS_SAMPLE_WINDOW_MS_CONFIG</span><span class="o">),</span> <span class="n">TimeUnit</span><span class="o">.</span><span class="na">MILLISECONDS</span><span class="o">)</span>
+                    <span class="o">.</span><span class="na">recordLevel</span><span class="o">(</span><span class="n">Sensor</span><span class="o">.</span><span class="na">RecordingLevel</span><span class="o">.</span><span class="na">forName</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">METRICS_RECORDING_LEVEL_CONFIG</span><span class="o">)))</span>
+                    <span class="o">.</span><span class="na">tags</span><span class="o">(</span><span class="n">metricTags</span><span class="o">);</span>
+
+            <span class="c1">//通过单例设置JMX监控</span>
+            <span class="n">List</span><span class="o">&lt;</span><span class="n">MetricsReporter</span><span class="o">&gt;</span> <span class="n">reporters</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getConfiguredInstances</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">METRIC_REPORTER_CLASSES_CONFIG</span><span class="o">,</span>
+                    <span class="n">MetricsReporter</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+            <span class="n">reporters</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="k">new</span> <span class="n">JmxReporter</span><span class="o">(</span><span class="n">JMX_PREFIX</span><span class="o">));</span>
+
+            <span class="c1">//设置统计信息</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">metrics</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Metrics</span><span class="o">(</span><span class="n">metricConfig</span><span class="o">,</span> <span class="n">reporters</span><span class="o">,</span> <span class="n">time</span><span class="o">);</span>
+            <span class="n">ProducerMetrics</span> <span class="n">metricsRegistry</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ProducerMetrics</span><span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">metrics</span><span class="o">);</span>
+
+            <span class="c1">//通过单例设置分区选择器</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">partitioner</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getConfiguredInstance</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">PARTITIONER_CLASS_CONFIG</span><span class="o">,</span> <span class="n">Partitioner</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+            <span class="kt">long</span> <span class="n">retryBackoffMs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRY_BACKOFF_MS_CONFIG</span><span class="o">);</span>
+
+            <span class="c1">//通过单例设置key和value的序列化器</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">keySerializer</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">keySerializer</span> <span class="o">=</span> <span class="n">ensureExtended</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getConfiguredInstance</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">KEY_SERIALIZER_CLASS_CONFIG</span><span class="o">,</span>
+                                                                                         <span class="n">Serializer</span><span class="o">.</span><span class="na">class</span><span class="o">));</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">keySerializer</span><span class="o">.</span><span class="na">configure</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">(),</span> <span class="kc">true</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">config</span><span class="o">.</span><span class="na">ignore</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">KEY_SERIALIZER_CLASS_CONFIG</span><span class="o">);</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">keySerializer</span> <span class="o">=</span> <span class="n">ensureExtended</span><span class="o">(</span><span class="n">keySerializer</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">valueSerializer</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">valueSerializer</span> <span class="o">=</span> <span class="n">ensureExtended</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getConfiguredInstance</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">VALUE_SERIALIZER_CLASS_CONFIG</span><span class="o">,</span>
+                                                                                           <span class="n">Serializer</span><span class="o">.</span><span class="na">class</span><span class="o">));</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">valueSerializer</span><span class="o">.</span><span class="na">configure</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">(),</span> <span class="kc">false</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">config</span><span class="o">.</span><span class="na">ignore</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">VALUE_SERIALIZER_CLASS_CONFIG</span><span class="o">);</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">valueSerializer</span> <span class="o">=</span> <span class="n">ensureExtended</span><span class="o">(</span><span class="n">valueSerializer</span><span class="o">);</span>
+            <span class="o">}</span>
+
+            <span class="c1">//设置客户端id</span>
+            <span class="c1">// load interceptors and make sure they get clientId</span>
+            <span class="n">userProvidedConfigs</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">CLIENT_ID_CONFIG</span><span class="o">,</span> <span class="n">clientId</span><span class="o">);</span>
+
+            <span class="c1">//设置消息拦截器集合</span>
+            <span class="n">List</span><span class="o">&lt;</span><span class="n">ProducerInterceptor</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;&gt;</span> <span class="n">interceptorList</span> <span class="o">=</span> <span class="o">(</span><span class="n">List</span><span class="o">)</span> <span class="o">(</span><span class="k">new</span> <span class="n">ProducerConfig</span><span class="o">(</span><span class="n">userProvidedConfigs</span><span class="o">,</span> <span class="kc">false</span><span class="o">)).</span><span class="na">getConfiguredInstances</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">INTERCEPTOR_CLASSES_CONFIG</span><span class="o">,</span>
+                    <span class="n">ProducerInterceptor</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ProducerInterceptors</span><span class="o">&lt;&gt;(</span><span class="n">interceptorList</span><span class="o">);</span>
+            <span class="n">ClusterResourceListeners</span> <span class="n">clusterResourceListeners</span> <span class="o">=</span> <span class="n">configureClusterResourceListeners</span><span class="o">(</span><span class="n">keySerializer</span><span class="o">,</span> <span class="n">valueSerializer</span><span class="o">,</span> <span class="n">interceptorList</span><span class="o">,</span> <span class="n">reporters</span><span class="o">);</span>
+
+            <span class="c1">//设置最大消息长度、发送单条消息的缓冲区大小和压缩类型</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">maxRequestSize</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_REQUEST_SIZE_CONFIG</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">totalMemorySize</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">BUFFER_MEMORY_CONFIG</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">compressionType</span> <span class="o">=</span> <span class="n">CompressionType</span><span class="o">.</span><span class="na">forName</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">COMPRESSION_TYPE_CONFIG</span><span class="o">));</span>
+
+            <span class="c1">//设置等待更新元数据信息的最大时长、请求得到确认的最大时长和事务管理器</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">maxBlockTimeMs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_BLOCK_MS_CONFIG</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">requestTimeoutMs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">REQUEST_TIMEOUT_MS_CONFIG</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">transactionManager</span> <span class="o">=</span> <span class="n">configureTransactionState</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">logContext</span><span class="o">,</span> <span class="n">log</span><span class="o">);</span>
+            <span class="kt">int</span> <span class="n">retries</span> <span class="o">=</span> <span class="n">configureRetries</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">transactionManager</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">,</span> <span class="n">log</span><span class="o">);</span>
+            <span class="kt">int</span> <span class="n">maxInflightRequests</span> <span class="o">=</span> <span class="n">configureInflightRequests</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">transactionManager</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">);</span>
+            <span class="kt">short</span> <span class="n">acks</span> <span class="o">=</span> <span class="n">configureAcks</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">transactionManager</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">,</span> <span class="n">log</span><span class="o">);</span>
+
+            <span class="k">this</span><span class="o">.</span><span class="na">apiVersions</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ApiVersions</span><span class="o">();</span>
+
+            <span class="c1">//设置消息收集器</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">accumulator</span> <span class="o">=</span> <span class="k">new</span> <span class="n">RecordAccumulator</span><span class="o">(</span><span class="n">logContext</span><span class="o">,</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">BATCH_SIZE_CONFIG</span><span class="o">),</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">totalMemorySize</span><span class="o">,</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">compressionType</span><span class="o">,</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">LINGER_MS_CONFIG</span><span class="o">),</span>
+                    <span class="n">retryBackoffMs</span><span class="o">,</span>
+                    <span class="n">metrics</span><span class="o">,</span>
+                    <span class="n">time</span><span class="o">,</span>
+                    <span class="n">apiVersions</span><span class="o">,</span>
+                    <span class="n">transactionManager</span><span class="o">);</span>
+
+            <span class="c1">//设置Kafka服务器的主机名和端口号</span>
+            <span class="n">List</span><span class="o">&lt;</span><span class="n">InetSocketAddress</span><span class="o">&gt;</span> <span class="n">addresses</span> <span class="o">=</span> <span class="n">ClientUtils</span><span class="o">.</span><span class="na">parseAndValidateAddresses</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getList</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">BOOTSTRAP_SERVERS_CONFIG</span><span class="o">));</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">metadata</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">metadata</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">;</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">metadata</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Metadata</span><span class="o">(</span><span class="n">retryBackoffMs</span><span class="o">,</span> <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">METADATA_MAX_AGE_CONFIG</span><span class="o">),</span>
+                    <span class="kc">true</span><span class="o">,</span> <span class="kc">true</span><span class="o">,</span> <span class="n">clusterResourceListeners</span><span class="o">);</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">metadata</span><span class="o">.</span><span class="na">update</span><span class="o">(</span><span class="n">Cluster</span><span class="o">.</span><span class="na">bootstrap</span><span class="o">(</span><span class="n">addresses</span><span class="o">),</span> <span class="n">Collections</span><span class="o">.&lt;</span><span class="n">String</span><span class="o">&gt;</span><span class="n">emptySet</span><span class="o">(),</span> <span class="n">time</span><span class="o">.</span><span class="na">milliseconds</span><span class="o">());</span>
+            <span class="o">}</span>
+            <span class="c1">//创建通道</span>
+            <span class="n">ChannelBuilder</span> <span class="n">channelBuilder</span> <span class="o">=</span> <span class="n">ClientUtils</span><span class="o">.</span><span class="na">createChannelBuilder</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+            <span class="n">Sensor</span> <span class="n">throttleTimeSensor</span> <span class="o">=</span> <span class="n">Sender</span><span class="o">.</span><span class="na">throttleTimeSensor</span><span class="o">(</span><span class="n">metricsRegistry</span><span class="o">.</span><span class="na">senderMetrics</span><span class="o">);</span>
+
+            <span class="c1">//创建Kafka的网络I/O客户端</span>
+            <span class="n">KafkaClient</span> <span class="n">client</span> <span class="o">=</span> <span class="n">kafkaClient</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">?</span> <span class="n">kafkaClient</span> <span class="o">:</span> <span class="k">new</span> <span class="n">NetworkClient</span><span class="o">(</span>
+                    <span class="k">new</span> <span class="nf">Selector</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">CONNECTIONS_MAX_IDLE_MS_CONFIG</span><span class="o">),</span>
+                            <span class="k">this</span><span class="o">.</span><span class="na">metrics</span><span class="o">,</span> <span class="n">time</span><span class="o">,</span> <span class="s">&quot;producer&quot;</span><span class="o">,</span> <span class="n">channelBuilder</span><span class="o">,</span> <span class="n">logContext</span><span class="o">),</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">metadata</span><span class="o">,</span>
+                    <span class="n">clientId</span><span class="o">,</span>
+                    <span class="n">maxInflightRequests</span><span class="o">,</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RECONNECT_BACKOFF_MS_CONFIG</span><span class="o">),</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RECONNECT_BACKOFF_MAX_MS_CONFIG</span><span class="o">),</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">SEND_BUFFER_CONFIG</span><span class="o">),</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RECEIVE_BUFFER_CONFIG</span><span class="o">),</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">requestTimeoutMs</span><span class="o">,</span>
+                    <span class="n">time</span><span class="o">,</span>
+                    <span class="kc">true</span><span class="o">,</span>
+                    <span class="n">apiVersions</span><span class="o">,</span>
+                    <span class="n">throttleTimeSensor</span><span class="o">,</span>
+                    <span class="n">logContext</span><span class="o">);</span>
+
+            <span class="c1">//设置sender线程的相关参数</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">sender</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Sender</span><span class="o">(</span><span class="n">logContext</span><span class="o">,</span>
+                    <span class="n">client</span><span class="o">,</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">metadata</span><span class="o">,</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">accumulator</span><span class="o">,</span>
+                    <span class="n">maxInflightRequests</span> <span class="o">==</span> <span class="mi">1</span><span class="o">,</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_REQUEST_SIZE_CONFIG</span><span class="o">),</span>
+                    <span class="n">acks</span><span class="o">,</span>
+                    <span class="n">retries</span><span class="o">,</span>
+                    <span class="n">metricsRegistry</span><span class="o">.</span><span class="na">senderMetrics</span><span class="o">,</span>
+                    <span class="n">Time</span><span class="o">.</span><span class="na">SYSTEM</span><span class="o">,</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">requestTimeoutMs</span><span class="o">,</span>
+                    <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRY_BACKOFF_MS_CONFIG</span><span class="o">),</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">transactionManager</span><span class="o">,</span>
+                    <span class="n">apiVersions</span><span class="o">);</span>
+
+            <span class="c1">//设置sender的执行线程并启动</span>
+            <span class="n">String</span> <span class="n">ioThreadName</span> <span class="o">=</span> <span class="n">NETWORK_THREAD_PREFIX</span> <span class="o">+</span> <span class="s">&quot; | &quot;</span> <span class="o">+</span> <span class="n">clientId</span><span class="o">;</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span> <span class="o">=</span> <span class="k">new</span> <span class="n">KafkaThread</span><span class="o">(</span><span class="n">ioThreadName</span><span class="o">,</span> <span class="k">this</span><span class="o">.</span><span class="na">sender</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span><span class="o">.</span><span class="na">start</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">errors</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">metrics</span><span class="o">.</span><span class="na">sensor</span><span class="o">(</span><span class="s">&quot;errors&quot;</span><span class="o">);</span>
+            <span class="n">config</span><span class="o">.</span><span class="na">logUnused</span><span class="o">();</span>
+            <span class="n">AppInfoParser</span><span class="o">.</span><span class="na">registerAppInfo</span><span class="o">(</span><span class="n">JMX_PREFIX</span><span class="o">,</span> <span class="n">clientId</span><span class="o">,</span> <span class="n">metrics</span><span class="o">);</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">&quot;Kafka producer started&quot;</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// call close methods if internal objects are already constructed this is to prevent resource leak. see KAFKA-2121</span>
+            <span class="n">close</span><span class="o">(</span><span class="mi">0</span><span class="o">,</span> <span class="n">TimeUnit</span><span class="o">.</span><span class="na">MILLISECONDS</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+            <span class="c1">// now propagate the exception</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">KafkaException</span><span class="o">(</span><span class="s">&quot;Failed to construct kafka producer&quot;</span><span class="o">,</span> <span class="n">t</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="n">TransactionManager</span> <span class="nf">configureTransactionState</span><span class="o">(</span><span class="n">ProducerConfig</span> <span class="n">config</span><span class="o">,</span> <span class="n">LogContext</span> <span class="n">logContext</span><span class="o">,</span> <span class="n">Logger</span> <span class="n">log</span><span class="o">)</span> <span class="o">{</span>
+
+        <span class="n">TransactionManager</span> <span class="n">transactionManager</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+
+        <span class="kt">boolean</span> <span class="n">userConfiguredIdempotence</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">().</span><span class="na">containsKey</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ENABLE_IDEMPOTENCE_CONFIG</span><span class="o">))</span>
+            <span class="n">userConfiguredIdempotence</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+        <span class="kt">boolean</span> <span class="n">userConfiguredTransactions</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">().</span><span class="na">containsKey</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span><span class="o">))</span>
+            <span class="n">userConfiguredTransactions</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+        <span class="kt">boolean</span> <span class="n">idempotenceEnabled</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getBoolean</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ENABLE_IDEMPOTENCE_CONFIG</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(!</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="n">userConfiguredIdempotence</span> <span class="o">&amp;&amp;</span> <span class="n">userConfiguredTransactions</span><span class="o">)</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ConfigException</span><span class="o">(</span><span class="s">&quot;Cannot set a &quot;</span> <span class="o">+</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span> <span class="o">+</span> <span class="s">&quot; without also enabling idempotence.&quot;</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">userConfiguredTransactions</span><span class="o">)</span>
+            <span class="n">idempotenceEnabled</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">String</span> <span class="n">transactionalId</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span><span class="o">);</span>
+            <span class="kt">int</span> <span class="n">transactionTimeoutMs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTION_TIMEOUT_CONFIG</span><span class="o">);</span>
+            <span class="kt">long</span> <span class="n">retryBackoffMs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="na">getLong</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRY_BACKOFF_MS_CONFIG</span><span class="o">);</span>
+            <span class="n">transactionManager</span> <span class="o">=</span> <span class="k">new</span> <span class="n">TransactionManager</span><span class="o">(</span><span class="n">logContext</span><span class="o">,</span> <span class="n">transactionalId</span><span class="o">,</span> <span class="n">transactionTimeoutMs</span><span class="o">,</span> <span class="n">retryBackoffMs</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">transactionManager</span><span class="o">.</span><span class="na">isTransactional</span><span class="o">())</span>
+                <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Instantiated a transactional producer.&quot;</span><span class="o">);</span>
+            <span class="k">else</span>
+                <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Instantiated an idempotent producer.&quot;</span><span class="o">);</span>
+        <span class="o">}</span>
+
+        <span class="k">return</span> <span class="n">transactionManager</span><span class="o">;</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kt">int</span> <span class="nf">configureRetries</span><span class="o">(</span><span class="n">ProducerConfig</span> <span class="n">config</span><span class="o">,</span> <span class="kt">boolean</span> <span class="n">idempotenceEnabled</span><span class="o">,</span> <span class="n">Logger</span> <span class="n">log</span><span class="o">)</span> <span class="o">{</span>
+        <span class="kt">boolean</span> <span class="n">userConfiguredRetries</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">().</span><span class="na">containsKey</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRIES_CONFIG</span><span class="o">))</span> <span class="o">{</span>
+            <span class="n">userConfiguredRetries</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">userConfiguredRetries</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// We recommend setting infinite retries when the idempotent producer is enabled, so it makes sense to make</span>
+            <span class="c1">// this the default.</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Overriding the default retries config to the recommended value of {} since the idempotent &quot;</span> <span class="o">+</span>
+                    <span class="s">&quot;producer is enabled.&quot;</span><span class="o">,</span> <span class="n">Integer</span><span class="o">.</span><span class="na">MAX_VALUE</span><span class="o">);</span>
+            <span class="k">return</span> <span class="n">Integer</span><span class="o">.</span><span class="na">MAX_VALUE</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRIES_CONFIG</span><span class="o">)</span> <span class="o">==</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ConfigException</span><span class="o">(</span><span class="s">&quot;Must set &quot;</span> <span class="o">+</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRIES_CONFIG</span> <span class="o">+</span> <span class="s">&quot; to non-zero when using the idempotent producer.&quot;</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="k">return</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">RETRIES_CONFIG</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kt">int</span> <span class="nf">configureInflightRequests</span><span class="o">(</span><span class="n">ProducerConfig</span> <span class="n">config</span><span class="o">,</span> <span class="kt">boolean</span> <span class="n">idempotenceEnabled</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="mi">5</span> <span class="o">&lt;</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION</span><span class="o">))</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ConfigException</span><span class="o">(</span><span class="s">&quot;Must set &quot;</span> <span class="o">+</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION</span> <span class="o">+</span> <span class="s">&quot; to at most 5&quot;</span> <span class="o">+</span>
+                    <span class="s">&quot; to use the idempotent producer.&quot;</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="k">return</span> <span class="n">config</span><span class="o">.</span><span class="na">getInt</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kt">short</span> <span class="nf">configureAcks</span><span class="o">(</span><span class="n">ProducerConfig</span> <span class="n">config</span><span class="o">,</span> <span class="kt">boolean</span> <span class="n">idempotenceEnabled</span><span class="o">,</span> <span class="n">Logger</span> <span class="n">log</span><span class="o">)</span> <span class="o">{</span>
+        <span class="kt">boolean</span> <span class="n">userConfiguredAcks</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="kt">short</span> <span class="n">acks</span> <span class="o">=</span> <span class="o">(</span><span class="kt">short</span><span class="o">)</span> <span class="n">parseAcks</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ACKS_CONFIG</span><span class="o">));</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">originals</span><span class="o">().</span><span class="na">containsKey</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ACKS_CONFIG</span><span class="o">))</span> <span class="o">{</span>
+            <span class="n">userConfiguredAcks</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">userConfiguredAcks</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Overriding the default {} to all since idempotence is enabled.&quot;</span><span class="o">,</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ACKS_CONFIG</span><span class="o">);</span>
+            <span class="k">return</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">idempotenceEnabled</span> <span class="o">&amp;&amp;</span> <span class="n">acks</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ConfigException</span><span class="o">(</span><span class="s">&quot;Must set &quot;</span> <span class="o">+</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">ACKS_CONFIG</span> <span class="o">+</span> <span class="s">&quot; to all in order to use the idempotent &quot;</span> <span class="o">+</span>
+                    <span class="s">&quot;producer. Otherwise we cannot guarantee idempotence.&quot;</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="k">return</span> <span class="n">acks</span><span class="o">;</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kt">int</span> <span class="nf">parseAcks</span><span class="o">(</span><span class="n">String</span> <span class="n">acksString</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="k">return</span> <span class="n">acksString</span><span class="o">.</span><span class="na">trim</span><span class="o">().</span><span class="na">equalsIgnoreCase</span><span class="o">(</span><span class="s">&quot;all&quot;</span><span class="o">)</span> <span class="o">?</span> <span class="o">-</span><span class="mi">1</span> <span class="o">:</span> <span class="n">Integer</span><span class="o">.</span><span class="na">parseInt</span><span class="o">(</span><span class="n">acksString</span><span class="o">.</span><span class="na">trim</span><span class="o">());</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">NumberFormatException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ConfigException</span><span class="o">(</span><span class="s">&quot;Invalid configuration value for &#39;acks&#39;: &quot;</span> <span class="o">+</span> <span class="n">acksString</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">initTransactions</span><span class="o">()</span> <span class="o">{</span>
+        <span class="n">throwIfNoTransactionManager</span><span class="o">();</span>
+        <span class="n">TransactionalRequestResult</span> <span class="n">result</span> <span class="o">=</span> <span class="n">transactionManager</span><span class="o">.</span><span class="na">initializeTransactions</span><span class="o">();</span>
+        <span class="n">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+        <span class="n">result</span><span class="o">.</span><span class="na">await</span><span class="o">();</span>
+    <span class="o">}</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">beginTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span> <span class="o">{</span>
+        <span class="n">throwIfNoTransactionManager</span><span class="o">();</span>
+        <span class="n">transactionManager</span><span class="o">.</span><span class="na">beginTransaction</span><span class="o">();</span>
+    <span class="o">}</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">sendOffsetsToTransaction</span><span class="o">(</span><span class="n">Map</span><span class="o">&lt;</span><span class="n">TopicPartition</span><span class="o">,</span> <span class="n">OffsetAndMetadata</span><span class="o">&gt;</span> <span class="n">offsets</span><span class="o">,</span>
+                                         <span class="n">String</span> <span class="n">consumerGroupId</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span> <span class="o">{</span>
+        <span class="n">throwIfNoTransactionManager</span><span class="o">();</span>
+        <span class="n">TransactionalRequestResult</span> <span class="n">result</span> <span class="o">=</span> <span class="n">transactionManager</span><span class="o">.</span><span class="na">sendOffsetsToTransaction</span><span class="o">(</span><span class="n">offsets</span><span class="o">,</span> <span class="n">consumerGroupId</span><span class="o">);</span>
+        <span class="n">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+        <span class="n">result</span><span class="o">.</span><span class="na">await</span><span class="o">();</span>
+    <span class="o">}</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">commitTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span> <span class="o">{</span>
+        <span class="n">throwIfNoTransactionManager</span><span class="o">();</span>
+        <span class="n">TransactionalRequestResult</span> <span class="n">result</span> <span class="o">=</span> <span class="n">transactionManager</span><span class="o">.</span><span class="na">beginCommit</span><span class="o">();</span>
+        <span class="n">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+        <span class="n">result</span><span class="o">.</span><span class="na">await</span><span class="o">();</span>
+    <span class="o">}</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">abortTransaction</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ProducerFencedException</span> <span class="o">{</span>
+        <span class="n">throwIfNoTransactionManager</span><span class="o">();</span>
+        <span class="n">TransactionalRequestResult</span> <span class="n">result</span> <span class="o">=</span> <span class="n">transactionManager</span><span class="o">.</span><span class="na">beginAbort</span><span class="o">();</span>
+        <span class="n">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+        <span class="n">result</span><span class="o">.</span><span class="na">await</span><span class="o">();</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="nf">send</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="nf">send</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="nf">send</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">,</span> <span class="n">Callback</span> <span class="n">callback</span><span class="o">)</span> <span class="o">{</span>
+        <span class="c1">// intercept the record, which can be potentially modified; this method does not throw exceptions</span>
+        <span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">interceptedRecord</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSend</span><span class="o">(</span><span class="n">record</span><span class="o">);</span>
+        <span class="k">return</span> <span class="nf">doSend</span><span class="o">(</span><span class="n">interceptedRecord</span><span class="o">,</span> <span class="n">callback</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="nf">doSend</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">,</span> <span class="n">Callback</span> <span class="n">callback</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">TopicPartition</span> <span class="n">tp</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="c1">// first make sure the metadata for the topic is available</span>
+            <span class="n">ClusterAndWaitTime</span> <span class="n">clusterAndWaitTime</span> <span class="o">=</span> <span class="n">waitOnMetadata</span><span class="o">(</span><span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">partition</span><span class="o">(),</span> <span class="n">maxBlockTimeMs</span><span class="o">);</span>
+            <span class="kt">long</span> <span class="n">remainingWaitMs</span> <span class="o">=</span> <span class="n">Math</span><span class="o">.</span><span class="na">max</span><span class="o">(</span><span class="mi">0</span><span class="o">,</span> <span class="n">maxBlockTimeMs</span> <span class="o">-</span> <span class="n">clusterAndWaitTime</span><span class="o">.</span><span class="na">waitedOnMetadataMs</span><span class="o">);</span>
+            <span class="n">Cluster</span> <span class="n">cluster</span> <span class="o">=</span> <span class="n">clusterAndWaitTime</span><span class="o">.</span><span class="na">cluster</span><span class="o">;</span>
+            <span class="kt">byte</span><span class="o">[]</span> <span class="n">serializedKey</span><span class="o">;</span>
+            <span class="k">try</span> <span class="o">{</span>
+                <span class="n">serializedKey</span> <span class="o">=</span> <span class="n">keySerializer</span><span class="o">.</span><span class="na">serialize</span><span class="o">(</span><span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">headers</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">key</span><span class="o">());</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">ClassCastException</span> <span class="n">cce</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">SerializationException</span><span class="o">(</span><span class="s">&quot;Can&#39;t convert key of class &quot;</span> <span class="o">+</span> <span class="n">record</span><span class="o">.</span><span class="na">key</span><span class="o">().</span><span class="na">getClass</span><span class="o">().</span><span class="na">getName</span><span class="o">()</span> <span class="o">+</span>
+                        <span class="s">&quot; to class &quot;</span> <span class="o">+</span> <span class="n">producerConfig</span><span class="o">.</span><span class="na">getClass</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">KEY_SERIALIZER_CLASS_CONFIG</span><span class="o">).</span><span class="na">getName</span><span class="o">()</span> <span class="o">+</span>
+                        <span class="s">&quot; specified in key.serializer&quot;</span><span class="o">,</span> <span class="n">cce</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="kt">byte</span><span class="o">[]</span> <span class="n">serializedValue</span><span class="o">;</span>
+            <span class="k">try</span> <span class="o">{</span>
+                <span class="n">serializedValue</span> <span class="o">=</span> <span class="n">valueSerializer</span><span class="o">.</span><span class="na">serialize</span><span class="o">(</span><span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">headers</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">value</span><span class="o">());</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">ClassCastException</span> <span class="n">cce</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">SerializationException</span><span class="o">(</span><span class="s">&quot;Can&#39;t convert value of class &quot;</span> <span class="o">+</span> <span class="n">record</span><span class="o">.</span><span class="na">value</span><span class="o">().</span><span class="na">getClass</span><span class="o">().</span><span class="na">getName</span><span class="o">()</span> <span class="o">+</span>
+                        <span class="s">&quot; to class &quot;</span> <span class="o">+</span> <span class="n">producerConfig</span><span class="o">.</span><span class="na">getClass</span><span class="o">(</span><span class="n">ProducerConfig</span><span class="o">.</span><span class="na">VALUE_SERIALIZER_CLASS_CONFIG</span><span class="o">).</span><span class="na">getName</span><span class="o">()</span> <span class="o">+</span>
+                        <span class="s">&quot; specified in value.serializer&quot;</span><span class="o">,</span> <span class="n">cce</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="kt">int</span> <span class="n">partition</span> <span class="o">=</span> <span class="n">partition</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">serializedKey</span><span class="o">,</span> <span class="n">serializedValue</span><span class="o">,</span> <span class="n">cluster</span><span class="o">);</span>
+            <span class="n">tp</span> <span class="o">=</span> <span class="k">new</span> <span class="n">TopicPartition</span><span class="o">(</span><span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">partition</span><span class="o">);</span>
+
+            <span class="n">setReadOnly</span><span class="o">(</span><span class="n">record</span><span class="o">.</span><span class="na">headers</span><span class="o">());</span>
+            <span class="n">Header</span><span class="o">[]</span> <span class="n">headers</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="na">headers</span><span class="o">().</span><span class="na">toArray</span><span class="o">();</span>
+
+            <span class="kt">int</span> <span class="n">serializedSize</span> <span class="o">=</span> <span class="n">AbstractRecords</span><span class="o">.</span><span class="na">estimateSizeInBytesUpperBound</span><span class="o">(</span><span class="n">apiVersions</span><span class="o">.</span><span class="na">maxUsableProduceMagic</span><span class="o">(),</span>
+                    <span class="n">compressionType</span><span class="o">,</span> <span class="n">serializedKey</span><span class="o">,</span> <span class="n">serializedValue</span><span class="o">,</span> <span class="n">headers</span><span class="o">);</span>
+            <span class="n">ensureValidRecordSize</span><span class="o">(</span><span class="n">serializedSize</span><span class="o">);</span>
+            <span class="kt">long</span> <span class="n">timestamp</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="na">timestamp</span><span class="o">()</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">?</span> <span class="n">time</span><span class="o">.</span><span class="na">milliseconds</span><span class="o">()</span> <span class="o">:</span> <span class="n">record</span><span class="o">.</span><span class="na">timestamp</span><span class="o">();</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">trace</span><span class="o">(</span><span class="s">&quot;Sending record {} with callback {} to topic {} partition {}&quot;</span><span class="o">,</span> <span class="n">record</span><span class="o">,</span> <span class="n">callback</span><span class="o">,</span> <span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">partition</span><span class="o">);</span>
+            <span class="c1">// producer callback will make sure to call both &#39;callback&#39; and interceptor callback</span>
+            <span class="n">Callback</span> <span class="n">interceptCallback</span> <span class="o">=</span> <span class="k">new</span> <span class="n">InterceptorCallback</span><span class="o">&lt;&gt;(</span><span class="n">callback</span><span class="o">,</span> <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">,</span> <span class="n">tp</span><span class="o">);</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">transactionManager</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">transactionManager</span><span class="o">.</span><span class="na">isTransactional</span><span class="o">())</span>
+                <span class="n">transactionManager</span><span class="o">.</span><span class="na">maybeAddPartitionToTransaction</span><span class="o">(</span><span class="n">tp</span><span class="o">);</span>
+
+            <span class="n">RecordAccumulator</span><span class="o">.</span><span class="na">RecordAppendResult</span> <span class="n">result</span> <span class="o">=</span> <span class="n">accumulator</span><span class="o">.</span><span class="na">append</span><span class="o">(</span><span class="n">tp</span><span class="o">,</span> <span class="n">timestamp</span><span class="o">,</span> <span class="n">serializedKey</span><span class="o">,</span>
+                    <span class="n">serializedValue</span><span class="o">,</span> <span class="n">headers</span><span class="o">,</span> <span class="n">interceptCallback</span><span class="o">,</span> <span class="n">remainingWaitMs</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">result</span><span class="o">.</span><span class="na">batchIsFull</span> <span class="o">||</span> <span class="n">result</span><span class="o">.</span><span class="na">newBatchCreated</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">log</span><span class="o">.</span><span class="na">trace</span><span class="o">(</span><span class="s">&quot;Waking up the sender since topic {} partition {} is either full or getting a new batch&quot;</span><span class="o">,</span> <span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">partition</span><span class="o">);</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+            <span class="o">}</span>
+            <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="na">future</span><span class="o">;</span>
+            <span class="c1">// handling exceptions and record the errors;</span>
+            <span class="c1">// for API exceptions return them in the future,</span>
+            <span class="c1">// for other exceptions throw directly</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">ApiException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">&quot;Exception occurred during message send:&quot;</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">callback</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span>
+                <span class="n">callback</span><span class="o">.</span><span class="na">onCompletion</span><span class="o">(</span><span class="kc">null</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">errors</span><span class="o">.</span><span class="na">record</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSendError</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">tp</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">return</span> <span class="k">new</span> <span class="nf">FutureFailure</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">errors</span><span class="o">.</span><span class="na">record</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSendError</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">tp</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">InterruptException</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">BufferExhaustedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">errors</span><span class="o">.</span><span class="na">record</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">metrics</span><span class="o">.</span><span class="na">sensor</span><span class="o">(</span><span class="s">&quot;buffer-exhausted-records&quot;</span><span class="o">).</span><span class="na">record</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSendError</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">tp</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">KafkaException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">errors</span><span class="o">.</span><span class="na">record</span><span class="o">();</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSendError</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">tp</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// we notify interceptor about all exceptions, since onSend is called before anything else in this method</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onSendError</span><span class="o">(</span><span class="n">record</span><span class="o">,</span> <span class="n">tp</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+            <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">setReadOnly</span><span class="o">(</span><span class="n">Headers</span> <span class="n">headers</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">headers</span> <span class="k">instanceof</span> <span class="n">RecordHeaders</span><span class="o">)</span> <span class="o">{</span>
+            <span class="o">((</span><span class="n">RecordHeaders</span><span class="o">)</span> <span class="n">headers</span><span class="o">).</span><span class="na">setReadOnly</span><span class="o">();</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="n">ClusterAndWaitTime</span> <span class="nf">waitOnMetadata</span><span class="o">(</span><span class="n">String</span> <span class="n">topic</span><span class="o">,</span> <span class="n">Integer</span> <span class="n">partition</span><span class="o">,</span> <span class="kt">long</span> <span class="n">maxWaitMs</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">InterruptedException</span> <span class="o">{</span>
+        <span class="c1">// add topic to metadata topic list if it is not there already and reset expiry</span>
+        <span class="n">metadata</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+        <span class="n">Cluster</span> <span class="n">cluster</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="na">fetch</span><span class="o">();</span>
+        <span class="n">Integer</span> <span class="n">partitionsCount</span> <span class="o">=</span> <span class="n">cluster</span><span class="o">.</span><span class="na">partitionCountForTopic</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+        <span class="c1">// Return cached metadata if we have it, and if the record&#39;s partition is either undefined</span>
+        <span class="c1">// or within the known partition range</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">partitionsCount</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="o">(</span><span class="n">partition</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">||</span> <span class="n">partition</span> <span class="o">&lt;</span> <span class="n">partitionsCount</span><span class="o">))</span>
+            <span class="k">return</span> <span class="k">new</span> <span class="nf">ClusterAndWaitTime</span><span class="o">(</span><span class="n">cluster</span><span class="o">,</span> <span class="mi">0</span><span class="o">);</span>
+
+        <span class="kt">long</span> <span class="n">begin</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="na">milliseconds</span><span class="o">();</span>
+        <span class="kt">long</span> <span class="n">remainingWaitMs</span> <span class="o">=</span> <span class="n">maxWaitMs</span><span class="o">;</span>
+        <span class="kt">long</span> <span class="n">elapsed</span><span class="o">;</span>
+        <span class="c1">// Issue metadata requests until we have metadata for the topic or maxWaitTimeMs is exceeded.</span>
+        <span class="c1">// In case we already have cached metadata for the topic, but the requested partition is greater</span>
+        <span class="c1">// than expected, issue an update request only once. This is necessary in case the metadata</span>
+        <span class="c1">// is stale and the number of partitions for this topic has increased in the meantime.</span>
+        <span class="k">do</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">trace</span><span class="o">(</span><span class="s">&quot;Requesting metadata update for topic {}.&quot;</span><span class="o">,</span> <span class="n">topic</span><span class="o">);</span>
+            <span class="n">metadata</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+            <span class="kt">int</span> <span class="n">version</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="na">requestUpdate</span><span class="o">();</span>
+            <span class="n">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+            <span class="k">try</span> <span class="o">{</span>
+                <span class="n">metadata</span><span class="o">.</span><span class="na">awaitUpdate</span><span class="o">(</span><span class="n">version</span><span class="o">,</span> <span class="n">remainingWaitMs</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">TimeoutException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+                <span class="c1">// Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">TimeoutException</span><span class="o">(</span><span class="s">&quot;Failed to update metadata after &quot;</span> <span class="o">+</span> <span class="n">maxWaitMs</span> <span class="o">+</span> <span class="s">&quot; ms.&quot;</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="n">cluster</span> <span class="o">=</span> <span class="n">metadata</span><span class="o">.</span><span class="na">fetch</span><span class="o">();</span>
+            <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="na">milliseconds</span><span class="o">()</span> <span class="o">-</span> <span class="n">begin</span><span class="o">;</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">elapsed</span> <span class="o">&gt;=</span> <span class="n">maxWaitMs</span><span class="o">)</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">TimeoutException</span><span class="o">(</span><span class="s">&quot;Failed to update metadata after &quot;</span> <span class="o">+</span> <span class="n">maxWaitMs</span> <span class="o">+</span> <span class="s">&quot; ms.&quot;</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">cluster</span><span class="o">.</span><span class="na">unauthorizedTopics</span><span class="o">().</span><span class="na">contains</span><span class="o">(</span><span class="n">topic</span><span class="o">))</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">TopicAuthorizationException</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+            <span class="n">remainingWaitMs</span> <span class="o">=</span> <span class="n">maxWaitMs</span> <span class="o">-</span> <span class="n">elapsed</span><span class="o">;</span>
+            <span class="n">partitionsCount</span> <span class="o">=</span> <span class="n">cluster</span><span class="o">.</span><span class="na">partitionCountForTopic</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">while</span> <span class="o">(</span><span class="n">partitionsCount</span> <span class="o">==</span> <span class="kc">null</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">partition</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">partition</span> <span class="o">&gt;=</span> <span class="n">partitionsCount</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">KafkaException</span><span class="o">(</span>
+                    <span class="n">String</span><span class="o">.</span><span class="na">format</span><span class="o">(</span><span class="s">&quot;Invalid partition given with record: %d is not in the range [0...%d).&quot;</span><span class="o">,</span> <span class="n">partition</span><span class="o">,</span> <span class="n">partitionsCount</span><span class="o">));</span>
+        <span class="o">}</span>
+
+        <span class="k">return</span> <span class="k">new</span> <span class="nf">ClusterAndWaitTime</span><span class="o">(</span><span class="n">cluster</span><span class="o">,</span> <span class="n">elapsed</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="cm">/**</span>
+<span class="cm">     * Validate that the record size isn&#39;t too large</span>
+<span class="cm">     */</span>
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">ensureValidRecordSize</span><span class="o">(</span><span class="kt">int</span> <span class="n">size</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">size</span> <span class="o">&gt;</span> <span class="k">this</span><span class="o">.</span><span class="na">maxRequestSize</span><span class="o">)</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">RecordTooLargeException</span><span class="o">(</span><span class="s">&quot;The message is &quot;</span> <span class="o">+</span> <span class="n">size</span> <span class="o">+</span>
+                    <span class="s">&quot; bytes when serialized which is larger than the maximum request size you have configured with the &quot;</span> <span class="o">+</span>
+                    <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">MAX_REQUEST_SIZE_CONFIG</span> <span class="o">+</span>
+                    <span class="s">&quot; configuration.&quot;</span><span class="o">);</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">size</span> <span class="o">&gt;</span> <span class="k">this</span><span class="o">.</span><span class="na">totalMemorySize</span><span class="o">)</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">RecordTooLargeException</span><span class="o">(</span><span class="s">&quot;The message is &quot;</span> <span class="o">+</span> <span class="n">size</span> <span class="o">+</span>
+                    <span class="s">&quot; bytes when serialized which is larger than the total memory buffer you have configured with the &quot;</span> <span class="o">+</span>
+                    <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">BUFFER_MEMORY_CONFIG</span> <span class="o">+</span>
+                    <span class="s">&quot; configuration.&quot;</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">flush</span><span class="o">()</span> <span class="o">{</span>
+        <span class="n">log</span><span class="o">.</span><span class="na">trace</span><span class="o">(</span><span class="s">&quot;Flushing accumulated records in producer.&quot;</span><span class="o">);</span>
+        <span class="k">this</span><span class="o">.</span><span class="na">accumulator</span><span class="o">.</span><span class="na">beginFlush</span><span class="o">();</span>
+        <span class="k">this</span><span class="o">.</span><span class="na">sender</span><span class="o">.</span><span class="na">wakeup</span><span class="o">();</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">accumulator</span><span class="o">.</span><span class="na">awaitFlushCompletion</span><span class="o">();</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">InterruptException</span><span class="o">(</span><span class="s">&quot;Flush interrupted.&quot;</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="n">List</span><span class="o">&lt;</span><span class="n">PartitionInfo</span><span class="o">&gt;</span> <span class="nf">partitionsFor</span><span class="o">(</span><span class="n">String</span> <span class="n">topic</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">Objects</span><span class="o">.</span><span class="na">requireNonNull</span><span class="o">(</span><span class="n">topic</span><span class="o">,</span> <span class="s">&quot;topic cannot be null&quot;</span><span class="o">);</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="k">return</span> <span class="nf">waitOnMetadata</span><span class="o">(</span><span class="n">topic</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="n">maxBlockTimeMs</span><span class="o">).</span><span class="na">cluster</span><span class="o">.</span><span class="na">partitionsForTopic</span><span class="o">(</span><span class="n">topic</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">InterruptException</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="n">Map</span><span class="o">&lt;</span><span class="n">MetricName</span><span class="o">,</span> <span class="o">?</span> <span class="kd">extends</span> <span class="n">Metric</span><span class="o">&gt;</span> <span class="n">metrics</span><span class="o">()</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="n">Collections</span><span class="o">.</span><span class="na">unmodifiableMap</span><span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">metrics</span><span class="o">.</span><span class="na">metrics</span><span class="o">());</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">close</span><span class="o">()</span> <span class="o">{</span>
+        <span class="n">close</span><span class="o">(</span><span class="n">Long</span><span class="o">.</span><span class="na">MAX_VALUE</span><span class="o">,</span> <span class="n">TimeUnit</span><span class="o">.</span><span class="na">MILLISECONDS</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">close</span><span class="o">(</span><span class="kt">long</span> <span class="n">timeout</span><span class="o">,</span> <span class="n">TimeUnit</span> <span class="n">timeUnit</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">close</span><span class="o">(</span><span class="n">timeout</span><span class="o">,</span> <span class="n">timeUnit</span><span class="o">,</span> <span class="kc">false</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">close</span><span class="o">(</span><span class="kt">long</span> <span class="n">timeout</span><span class="o">,</span> <span class="n">TimeUnit</span> <span class="n">timeUnit</span><span class="o">,</span> <span class="kt">boolean</span> <span class="n">swallowException</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">timeout</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="o">)</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">IllegalArgumentException</span><span class="o">(</span><span class="s">&quot;The timeout cannot be negative.&quot;</span><span class="o">);</span>
+
+        <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Closing the Kafka producer with timeoutMillis = {} ms.&quot;</span><span class="o">,</span> <span class="n">timeUnit</span><span class="o">.</span><span class="na">toMillis</span><span class="o">(</span><span class="n">timeout</span><span class="o">));</span>
+        <span class="c1">// this will keep track of the first encountered exception</span>
+        <span class="n">AtomicReference</span><span class="o">&lt;</span><span class="n">Throwable</span><span class="o">&gt;</span> <span class="n">firstException</span> <span class="o">=</span> <span class="k">new</span> <span class="n">AtomicReference</span><span class="o">&lt;&gt;();</span>
+        <span class="kt">boolean</span> <span class="n">invokedFromCallback</span> <span class="o">=</span> <span class="n">Thread</span><span class="o">.</span><span class="na">currentThread</span><span class="o">()</span> <span class="o">==</span> <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">timeout</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">invokedFromCallback</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">log</span><span class="o">.</span><span class="na">warn</span><span class="o">(</span><span class="s">&quot;Overriding close timeout {} ms to 0 ms in order to prevent useless blocking due to self-join. &quot;</span> <span class="o">+</span>
+                        <span class="s">&quot;This means you have incorrectly invoked close with a non-zero timeout from the producer call-back.&quot;</span><span class="o">,</span> <span class="n">timeout</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="c1">// Try to close gracefully.</span>
+                <span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">sender</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">sender</span><span class="o">.</span><span class="na">initiateClose</span><span class="o">();</span>
+                <span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">ioThread</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="k">try</span> <span class="o">{</span>
+                        <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span><span class="o">.</span><span class="na">join</span><span class="o">(</span><span class="n">timeUnit</span><span class="o">.</span><span class="na">toMillis</span><span class="o">(</span><span class="n">timeout</span><span class="o">));</span>
+                    <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+                        <span class="n">firstException</span><span class="o">.</span><span class="na">compareAndSet</span><span class="o">(</span><span class="kc">null</span><span class="o">,</span> <span class="k">new</span> <span class="n">InterruptException</span><span class="o">(</span><span class="n">t</span><span class="o">));</span>
+                        <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="s">&quot;Interrupted while joining ioThread&quot;</span><span class="o">,</span> <span class="n">t</span><span class="o">);</span>
+                    <span class="o">}</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">sender</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span><span class="o">.</span><span class="na">isAlive</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">&quot;Proceeding to force close the producer since pending requests could not be completed &quot;</span> <span class="o">+</span>
+                    <span class="s">&quot;within timeout {} ms.&quot;</span><span class="o">,</span> <span class="n">timeout</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">sender</span><span class="o">.</span><span class="na">forceClose</span><span class="o">();</span>
+            <span class="c1">// Only join the sender thread when not calling from callback.</span>
+            <span class="k">if</span> <span class="o">(!</span><span class="n">invokedFromCallback</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">try</span> <span class="o">{</span>
+                    <span class="k">this</span><span class="o">.</span><span class="na">ioThread</span><span class="o">.</span><span class="na">join</span><span class="o">();</span>
+                <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">firstException</span><span class="o">.</span><span class="na">compareAndSet</span><span class="o">(</span><span class="kc">null</span><span class="o">,</span> <span class="k">new</span> <span class="n">InterruptException</span><span class="o">(</span><span class="n">e</span><span class="o">));</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+
+        <span class="n">ClientUtils</span><span class="o">.</span><span class="na">closeQuietly</span><span class="o">(</span><span class="n">interceptors</span><span class="o">,</span> <span class="s">&quot;producer interceptors&quot;</span><span class="o">,</span> <span class="n">firstException</span><span class="o">);</span>
+        <span class="n">ClientUtils</span><span class="o">.</span><span class="na">closeQuietly</span><span class="o">(</span><span class="n">metrics</span><span class="o">,</span> <span class="s">&quot;producer metrics&quot;</span><span class="o">,</span> <span class="n">firstException</span><span class="o">);</span>
+        <span class="n">ClientUtils</span><span class="o">.</span><span class="na">closeQuietly</span><span class="o">(</span><span class="n">keySerializer</span><span class="o">,</span> <span class="s">&quot;producer keySerializer&quot;</span><span class="o">,</span> <span class="n">firstException</span><span class="o">);</span>
+        <span class="n">ClientUtils</span><span class="o">.</span><span class="na">closeQuietly</span><span class="o">(</span><span class="n">valueSerializer</span><span class="o">,</span> <span class="s">&quot;producer valueSerializer&quot;</span><span class="o">,</span> <span class="n">firstException</span><span class="o">);</span>
+        <span class="n">ClientUtils</span><span class="o">.</span><span class="na">closeQuietly</span><span class="o">(</span><span class="n">partitioner</span><span class="o">,</span> <span class="s">&quot;producer partitioner&quot;</span><span class="o">,</span> <span class="n">firstException</span><span class="o">);</span>
+        <span class="n">AppInfoParser</span><span class="o">.</span><span class="na">unregisterAppInfo</span><span class="o">(</span><span class="n">JMX_PREFIX</span><span class="o">,</span> <span class="n">clientId</span><span class="o">,</span> <span class="n">metrics</span><span class="o">);</span>
+        <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">&quot;Kafka producer has been closed&quot;</span><span class="o">);</span>
+        <span class="n">Throwable</span> <span class="n">exception</span> <span class="o">=</span> <span class="n">firstException</span><span class="o">.</span><span class="na">get</span><span class="o">();</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">exception</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">swallowException</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">exception</span> <span class="k">instanceof</span> <span class="n">InterruptException</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">throw</span> <span class="o">(</span><span class="n">InterruptException</span><span class="o">)</span> <span class="n">exception</span><span class="o">;</span>
+            <span class="o">}</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">KafkaException</span><span class="o">(</span><span class="s">&quot;Failed to close kafka producer&quot;</span><span class="o">,</span> <span class="n">exception</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="n">ClusterResourceListeners</span> <span class="nf">configureClusterResourceListeners</span><span class="o">(</span><span class="n">Serializer</span><span class="o">&lt;</span><span class="n">K</span><span class="o">&gt;</span> <span class="n">keySerializer</span><span class="o">,</span> <span class="n">Serializer</span><span class="o">&lt;</span><span class="n">V</span><span class="o">&gt;</span> <span class="n">valueSerializer</span><span class="o">,</span> <span class="n">List</span><span class="o">&lt;?&gt;...</span> <span class="n">candidateLists</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">ClusterResourceListeners</span> <span class="n">clusterResourceListeners</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ClusterResourceListeners</span><span class="o">();</span>
+        <span class="k">for</span> <span class="o">(</span><span class="n">List</span><span class="o">&lt;?&gt;</span> <span class="nl">candidateList:</span> <span class="n">candidateLists</span><span class="o">)</span>
+            <span class="n">clusterResourceListeners</span><span class="o">.</span><span class="na">maybeAddAll</span><span class="o">(</span><span class="n">candidateList</span><span class="o">);</span>
+
+        <span class="n">clusterResourceListeners</span><span class="o">.</span><span class="na">maybeAdd</span><span class="o">(</span><span class="n">keySerializer</span><span class="o">);</span>
+        <span class="n">clusterResourceListeners</span><span class="o">.</span><span class="na">maybeAdd</span><span class="o">(</span><span class="n">valueSerializer</span><span class="o">);</span>
+        <span class="k">return</span> <span class="n">clusterResourceListeners</span><span class="o">;</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">int</span> <span class="nf">partition</span><span class="o">(</span><span class="n">ProducerRecord</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">record</span><span class="o">,</span> <span class="kt">byte</span><span class="o">[]</span> <span class="n">serializedKey</span><span class="o">,</span> <span class="kt">byte</span><span class="o">[]</span> <span class="n">serializedValue</span><span class="o">,</span> <span class="n">Cluster</span> <span class="n">cluster</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">Integer</span> <span class="n">partition</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="na">partition</span><span class="o">();</span>
+        <span class="k">return</span> <span class="n">partition</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">?</span>
+                <span class="n">partition</span> <span class="o">:</span>
+                <span class="n">partitioner</span><span class="o">.</span><span class="na">partition</span><span class="o">(</span>
+                        <span class="n">record</span><span class="o">.</span><span class="na">topic</span><span class="o">(),</span> <span class="n">record</span><span class="o">.</span><span class="na">key</span><span class="o">(),</span> <span class="n">serializedKey</span><span class="o">,</span> <span class="n">record</span><span class="o">.</span><span class="na">value</span><span class="o">(),</span> <span class="n">serializedValue</span><span class="o">,</span> <span class="n">cluster</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">throwIfNoTransactionManager</span><span class="o">()</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">transactionManager</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">IllegalStateException</span><span class="o">(</span><span class="s">&quot;Cannot use transactional methods without enabling transactions &quot;</span> <span class="o">+</span>
+                    <span class="s">&quot;by setting the &quot;</span> <span class="o">+</span> <span class="n">ProducerConfig</span><span class="o">.</span><span class="na">TRANSACTIONAL_ID_CONFIG</span> <span class="o">+</span> <span class="s">&quot; configuration property&quot;</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">ClusterAndWaitTime</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="n">Cluster</span> <span class="n">cluster</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">long</span> <span class="n">waitedOnMetadataMs</span><span class="o">;</span>
+        <span class="n">ClusterAndWaitTime</span><span class="o">(</span><span class="n">Cluster</span> <span class="n">cluster</span><span class="o">,</span> <span class="kt">long</span> <span class="n">waitedOnMetadataMs</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">cluster</span> <span class="o">=</span> <span class="n">cluster</span><span class="o">;</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">waitedOnMetadataMs</span> <span class="o">=</span> <span class="n">waitedOnMetadataMs</span><span class="o">;</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">FutureFailure</span> <span class="kd">implements</span> <span class="n">Future</span><span class="o">&lt;</span><span class="n">RecordMetadata</span><span class="o">&gt;</span> <span class="o">{</span>
+
+        <span class="kd">private</span> <span class="kd">final</span> <span class="n">ExecutionException</span> <span class="n">exception</span><span class="o">;</span>
+
+        <span class="kd">public</span> <span class="nf">FutureFailure</span><span class="o">(</span><span class="n">Exception</span> <span class="n">exception</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">exception</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ExecutionException</span><span class="o">(</span><span class="n">exception</span><span class="o">);</span>
+        <span class="o">}</span>
+
+        <span class="nd">@Override</span>
+        <span class="kd">public</span> <span class="kt">boolean</span> <span class="nf">cancel</span><span class="o">(</span><span class="kt">boolean</span> <span class="n">interrupt</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="nd">@Override</span>
+        <span class="kd">public</span> <span class="n">RecordMetadata</span> <span class="nf">get</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">ExecutionException</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">this</span><span class="o">.</span><span class="na">exception</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="nd">@Override</span>
+        <span class="kd">public</span> <span class="n">RecordMetadata</span> <span class="nf">get</span><span class="o">(</span><span class="kt">long</span> <span class="n">timeout</span><span class="o">,</span> <span class="n">TimeUnit</span> <span class="n">unit</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">ExecutionException</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="k">this</span><span class="o">.</span><span class="na">exception</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="nd">@Override</span>
+        <span class="kd">public</span> <span class="kt">boolean</span> <span class="nf">isCancelled</span><span class="o">()</span> <span class="o">{</span>
+            <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="nd">@Override</span>
+        <span class="kd">public</span> <span class="kt">boolean</span> <span class="nf">isDone</span><span class="o">()</span> <span class="o">{</span>
+            <span class="k">return</span> <span class="kc">true</span><span class="o">;</span>
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">InterceptorCallback</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="kd">implements</span> <span class="n">Callback</span> <span class="o">{</span>
+        <span class="kd">private</span> <span class="kd">final</span> <span class="n">Callback</span> <span class="n">userCallback</span><span class="o">;</span>
+        <span class="kd">private</span> <span class="kd">final</span> <span class="n">ProducerInterceptors</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">interceptors</span><span class="o">;</span>
+        <span class="kd">private</span> <span class="kd">final</span> <span class="n">TopicPartition</span> <span class="n">tp</span><span class="o">;</span>
+
+        <span class="kd">private</span> <span class="nf">InterceptorCallback</span><span class="o">(</span><span class="n">Callback</span> <span class="n">userCallback</span><span class="o">,</span> <span class="n">ProducerInterceptors</span><span class="o">&lt;</span><span class="n">K</span><span class="o">,</span> <span class="n">V</span><span class="o">&gt;</span> <span class="n">interceptors</span><span class="o">,</span> <span class="n">TopicPartition</span> <span class="n">tp</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">userCallback</span> <span class="o">=</span> <span class="n">userCallback</span><span class="o">;</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span> <span class="o">=</span> <span class="n">interceptors</span><span class="o">;</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">tp</span> <span class="o">=</span> <span class="n">tp</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="kd">public</span> <span class="kt">void</span> <span class="nf">onCompletion</span><span class="o">(</span><span class="n">RecordMetadata</span> <span class="n">metadata</span><span class="o">,</span> <span class="n">Exception</span> <span class="n">exception</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">metadata</span> <span class="o">=</span> <span class="n">metadata</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">?</span> <span class="n">metadata</span> <span class="o">:</span> <span class="k">new</span> <span class="n">RecordMetadata</span><span class="o">(</span><span class="n">tp</span><span class="o">,</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="n">RecordBatch</span><span class="o">.</span><span class="na">NO_TIMESTAMP</span><span class="o">,</span> <span class="n">Long</span><span class="o">.</span><span class="na">valueOf</span><span class="o">(-</span><span class="mi">1L</span><span class="o">),</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="o">-</span><span class="mi">1</span><span class="o">);</span>
+            <span class="k">this</span><span class="o">.</span><span class="na">interceptors</span><span class="o">.</span><span class="na">onAcknowledgement</span><span class="o">(</span><span class="n">metadata</span><span class="o">,</span> <span class="n">exception</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">userCallback</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span>
+                <span class="k">this</span><span class="o">.</span><span class="na">userCallback</span><span class="o">.</span><span class="na">onCompletion</span><span class="o">(</span><span class="n">metadata</span><span class="o">,</span> <span class="n">exception</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+</pre></div>
+    </div>
+    <div id="footer">
+      <span>
+        <p>Copyright © 2018 余昕宇.
+        Powered by <a href="http://simiki.org/" target="_blank">Simiki</a>.</p>
+        <p>Site Generated 2018-05-23 22:07:49</p>
+      </span>
+    </div>
+
+    
+    
+  </body>
+</html>
